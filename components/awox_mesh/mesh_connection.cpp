@@ -73,6 +73,8 @@ void MeshConnection::set_address(uint64_t address) {
     for (int mesh_id : this->linked_mesh_ids_) {
       Device *device = this->mesh_->get_device(mesh_id);
       if (device != nullptr) {
+        ESP_LOGI(TAG, "Availability source=connection_lost mesh=%d connection=%u peer=%s", mesh_id,
+                 this->connection_index_, this->address_str_);
         device->online = false;
         this->mesh_->publish_availability(device, true);
       }
@@ -161,6 +163,11 @@ bool MeshConnection::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if
                  string_as_hex_string(std::string((char *) param->notify.value, param->notify.value_len)).c_str());
         break;
       }
+      if (param->notify.value_len < 20 || param->notify.value_len > 23) {
+        ESP_LOGW(TAG, "[%u] [%s] Invalid mesh notification length (%u bytes), ignored", this->connection_index_,
+                 this->address_str_, param->notify.value_len);
+        break;
+      }
       std::string notification = std::string((char *) param->notify.value, param->notify.value_len);
       std::string packet = this->decrypt_packet(notification);
       ESP_LOGV(TAG, "Notification received: %s", string_as_hex_string(packet).c_str());
@@ -188,8 +195,8 @@ bool MeshConnection::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if
 
           break;
         } else if (param->read.value[0] == 0xe) {
-          ESP_LOGE(TAG, "Device authentication error: known mesh credentials are not excepted by the device. Did you "
-                        "re-pair them to your Awox app with a different account?");
+          ESP_LOGE(TAG, "[%u] [%s] Device authentication rejected (0x0E)", this->connection_index_,
+                   this->address_str_);
         } else {
           ESP_LOGE(TAG, "Unexpected pair value");
         }
@@ -364,7 +371,7 @@ void MeshConnection::handle_packet(std::string &packet) {
     mesh_id = (static_cast<unsigned char>(packet[19]) * 256) + static_cast<unsigned char>(packet[10]);
     mode = static_cast<unsigned char>(packet[12]);
 
-    online = packet[11] > 0;
+    online = static_cast<unsigned char>(packet[11]) != 0;
     state = (mode & 1) == 1;
     color_mode = ((mode >> 1) & 1) == 1;
     sequence_mode = ((mode >> 2) & 1) == 1;
@@ -488,6 +495,13 @@ void MeshConnection::handle_packet(std::string &packet) {
 
   if (device->online != online) {
     online_changed = true;
+    if (static_cast<unsigned char>(packet[7]) == COMMAND_ONLINE_STATUS_REPORT) {
+      ESP_LOGI(TAG, "Availability source=online_status mesh=%d online=%d raw=%02X connection=%u peer=%s", mesh_id,
+               online, static_cast<unsigned char>(packet[11]), this->connection_index_, this->address_str_);
+    } else {
+      ESP_LOGI(TAG, "Availability source=status mesh=%d online=%d connection=%u peer=%s", mesh_id, online,
+               this->connection_index_, this->address_str_);
+    }
   }
 
   device->online = online;
