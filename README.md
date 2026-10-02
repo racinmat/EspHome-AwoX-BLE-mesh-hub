@@ -4,6 +4,81 @@ A ESPhome component (https://esphome.io/components/external_components.html#git)
 
 You will need your mesh credentials, easiest way to find/get these is to use [this form](https://fsaris.github.io/EspHome-AwoX-BLE-mesh-hub/awoxh-mesh-credentials-tool/) to read them from your AwoX Cloud account.
 
+### Unattended availability diagnosis
+
+The component logs availability transitions at INFO with `source=online_status` (including the raw AwoX availability byte), `source=status`, or `source=connection_lost` (including the connection index and peer). An `online_status` report with `raw=00` is an actual mesh offline report, not proof that the bulb lost mains power. A nonzero high-bit byte such as `FF` was previously interpreted as offline on targets where `char` is signed; this version treats all nonzero values as online. GATT disconnect reason and authentication messages are logged nearby under `awox.connection`. The 3-second publication debounce can suppress short transitions, so correlate the transition with the later `Publish online/offline` message and the MQTT availability topic.
+
+For the Taussigova hub, replace the existing Git `external_components` entry in `home-setup/home-assistant/others/esphome/esp_awox_ble_mesh_taussigova.yaml` with this local source (do not keep both entries):
+
+```yaml
+external_components:
+  - source:
+   type: local
+   path: D:/Projects/EspHome-AwoX-BLE-mesh-hub/components
+```
+
+Keep the live mesh credentials, device mappings, name, broker, and BLE settings unchanged for the baseline. After adding the health diagnostics below, validate, compile, and upload from PowerShell:
+
+```powershell
+$config = 'D:\Projects\home-setup\home-assistant\others\esphome\esp_awox_ble_mesh_taussigova.yaml'
+esphome config $config
+esphome compile $config
+esphome upload $config --device 192.168.10.32
+```
+
+Check that the compiled configuration lists `external_components` as a local path before uploading. The included `validation-c3.yaml` compiles against the local code with dummy credentials; **do not flash it to the real hub**.
+
+For a multi-hour capture, add these ESPHome diagnostics to the live config (merge with existing `sensor`/`text_sensor` sections if present):
+
+```yaml
+debug:
+  update_interval: 60s
+
+sensor:
+  - platform: uptime
+    name: "AwoX Hub uptime"
+    update_interval: 30s
+  - platform: wifi_signal
+    name: "AwoX Hub Wi-Fi RSSI"
+    update_interval: 30s
+
+text_sensor:
+  - platform: debug
+    reset_reason:
+      name: "AwoX Hub reset reason"
+```
+
+On an always-on computer on the same LAN as the Home Assistant MQTT broker, install `uv` and run the recorder before the light test. In PowerShell, from this repo (replace the username and private output path):
+
+```powershell
+uv run --no-project --with paho-mqtt python .\capture_mqtt.py --host homeassistant.lan --user YOUR_MQTT_USER --hours 12 --output D:\PrivateLogs\awox-YYYYMMDD.jsonl
+```
+
+It prompts for the password, reconnects on subscriber disconnect, timestamps broker events in UTC, and records `awox-ble-mesh-hub/#` (including `debug`, `status`, `connected`, `connection_status`, and per-device `availability`). Create the output directory beforehand; keep the PC awake and the output outside Git. **The `debug` stream can contain mesh credentials and session keys: keep the raw JSONL private and redact before sharing.** If the broker or the PC disconnects, the recorder logs the gap but cannot recover MQTT messages sent while it was away. A USB serial log of the hub is needed to see firmware events during a hub Wi-Fi outage.
+
+If a USB connection is available, connect it before the baseline and start a separate serial capture in another PowerShell terminal, using the real config and COM port (do not use `--reset`):
+
+```powershell
+esphome logs D:\Projects\home-setup\home-assistant\others\esphome\esp_awox_ble_mesh_taussigova.yaml --device COM5 *> D:\PrivateLogs\awox-serial-YYYYMMDD.txt
+```
+
+`COM5` is only an example for an AwoX ESP32 directly connected to Windows. If both SkyConnect and the AwoX ESP are plugged into Home Assistant Green, leave both in place. Windows cannot read Green's USB serial port using `--device COM5`. The ESPHome Device Builder logs view is not a persistent unattended capture.
+
+For a file capture on Green, install the Community **Advanced SSH & Web Terminal** app (the standard Terminal & SSH app does not have the same hardware access). Configure authentication and add `socat` and `coreutils` to the app's `packages` list, then restart that app. In its terminal run `ls -l /dev/serial/by-id/` and identify the Espressif/ESP32-C3 entry by name; **do not select the SkyConnect/Zigbee coordinator**. If the ESP32 is not listed, verify its data-capable USB cable and that this app can see the port before testing. Close any ESPHome serial logs viewer so it does not compete for the port. Start a 12-hour file capture in the app terminal, replacing the device path with the identified ESP entry:
+
+```sh
+DEVICE='/dev/serial/by-id/usb-Espressif_REPLACE_WITH_ACTUAL_NAME'
+LOG='/share/awox-serial-20261001.txt'
+test -e "$DEVICE" && command -v socat && command -v timeout
+nohup timeout 12h sh -c 'while :; do date -u "+[%Y-%m-%dT%H:%M:%SZ] opening serial" >> "$1"; socat -u "$2",raw,echo=0,b115200 - >> "$1" 2>&1; sleep 2; done' sh "$LOG" "$DEVICE" </dev/null >/dev/null 2>&1 &
+```
+
+Check `tail -n 20 "$LOG"` after a minute: it must show actual ESPHome log lines, not just `opening serial` or permission errors. The loop retries if the ESP USB device disappears and reappears, and the capture ends after 12 hours. It does not survive a restart of the SSH app itself; `/share` persists, but the recorder must be restarted afterward. The PC can record MQTT simultaneously, and neither capture needs the SkyConnect port.
+
+Keep any serial capture running for the full test. Use a powered USB cable that does not disturb the hub's normal placement; if this changes its supply or RF environment, record that as a separate test, not the baseline. Serial and MQTT debug logs contain sensitive data and must remain private.
+
+Before leaving the test unattended, check that the JSONL contains a `connect` event with reason `Success`, a fresh `debug` message (not only retained availability), and changing uptime/Wi-Fi sensor messages. Note the UTC start and end, keep Shelly relays powered and change no other RF variables. Afterward, join the raw `online_status`, disconnect, availability, hub `/status` (MQTT last will), uptime, and Wi-Fi signal timelines with HA/Shelly history. For `raw=00` with a stable GATT link and good independent BLE advertisements, investigate mesh reachability/protocol; for a GATT loss, inspect reason/auth and which linked IDs went offline; for a `/status` outage or uptime reset, inspect hub power, Wi-Fi association, and broker availability first. The recorder alone cannot establish bulb power or RF transmission.
+
 ### Devices
 
 When setup the component will scan for AwoX BLE mesh devices and publish [discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery) messages for each device on MQTT. When using HomeAssistant the device will show up under the MQTT integration. And you can (re)name the devices there.
