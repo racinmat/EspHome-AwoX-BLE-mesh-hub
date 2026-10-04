@@ -56,13 +56,15 @@ uv run --no-project --with paho-mqtt python .\capture_mqtt.py --host homeassista
 
 It prompts for the password, reconnects on subscriber disconnect, timestamps broker events in UTC, and records `awox-ble-mesh-hub/#` (including `debug`, `status`, `connected`, `connection_status`, and per-device `availability`). Create the output directory beforehand; keep the PC awake and the output outside Git. **The `debug` stream can contain mesh credentials and session keys: keep the raw JSONL private and redact before sharing.** If the broker or the PC disconnects, the recorder logs the gap but cannot recover MQTT messages sent while it was away. A USB serial log of the hub is needed to see firmware events during a hub Wi-Fi outage.
 
-If a USB connection is available, connect it before the baseline and start a separate serial capture in another PowerShell terminal, using the real config and COM port (do not use `--reset`):
+If the AwoX M5Stack/ESP32 is connected directly to your Windows PC via a data-capable USB cable, find its port with `Get-CimInstance Win32_SerialPort | Select-Object Name,DeviceID,PNPDeviceID` (disconnect/reconnect the M5Stack to distinguish it from other ports). Start this in a second PowerShell terminal before the test, replacing `COM5` and the private output path:
 
 ```powershell
-esphome logs D:\Projects\home-setup\home-assistant\others\esphome\esp_awox_ble_mesh_taussigova.yaml --device COM5 *> D:\PrivateLogs\awox-serial-YYYYMMDD.txt
+uv run --no-project --with pyserial python D:\Projects\EspHome-AwoX-BLE-mesh-hub\capture_serial.py --port COM5 --hours 12 --output D:\PrivateLogs\awox-serial-YYYYMMDD.jsonl
 ```
 
-`COM5` is only an example for an AwoX ESP32 directly connected to Windows. If both SkyConnect and the AwoX ESP are plugged into Home Assistant Green, leave both in place. Windows cannot read Green's USB serial port using `--device COM5`. The ESPHome Device Builder logs view is not a persistent unattended capture.
+The serial recorder timestamps each line in UTC and retries the same COM port after USB disconnects. Confirm a `serial_open` event and fresh `line` events before leaving it running. If Windows gives the M5Stack a *different* COM number after reconnection, restart with that port. Start the MQTT recorder above independently in the first terminal; USB serial remains available when hub Wi-Fi/MQTT drops. Connecting the M5Stack to the PC may change its power supply or BLE placement: keep it in its original position where practical, and record the move if that is impossible. Keep the PC awake on mains power. A normal USB replug restarts the ESP32, so do it before measuring the baseline.
+
+If both SkyConnect and the AwoX ESP are instead plugged into Home Assistant Green, leave both in place. Windows cannot read Green's USB serial port using `COM5`. The ESPHome Device Builder logs view is not a persistent unattended capture.
 
 For a file capture on Green, install the Community **Advanced SSH & Web Terminal** app (the standard Terminal & SSH app does not have the same hardware access). Configure authentication and add `socat` and `coreutils` to the app's `packages` list, then restart that app. In its terminal run `ls -l /dev/serial/by-id/` and identify the Espressif/ESP32-C3 entry by name; **do not select the SkyConnect/Zigbee coordinator**. If the ESP32 is not listed, verify its data-capable USB cable and that this app can see the port before testing. Close any ESPHome serial logs viewer so it does not compete for the port. Start a 12-hour file capture in the app terminal, replacing the device path with the identified ESP entry:
 
