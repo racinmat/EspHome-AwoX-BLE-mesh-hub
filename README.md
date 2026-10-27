@@ -8,22 +8,22 @@ You will need your mesh credentials, easiest way to find/get these is to use [th
 
 The component logs availability transitions at INFO with `source=online_status` (including the raw AwoX availability byte), `source=status`, or `source=connection_lost` (including the connection index and peer). An `online_status` report with `raw=00` is an actual mesh offline report, not proof that the bulb lost mains power. A nonzero high-bit byte such as `FF` was previously interpreted as offline on targets where `char` is signed; this version treats all nonzero values as online. GATT disconnect reason and authentication messages are logged nearby under `awox.connection`. The 3-second publication debounce can suppress short transitions, so correlate the transition with the later `Publish online/offline` message and the MQTT availability topic.
 
-For the Taussigova hub, replace the existing Git `external_components` entry in `home-setup/home-assistant/others/esphome/esp_awox_ble_mesh_taussigova.yaml` with this local source (do not keep both entries):
+To test local changes, replace the existing Git `external_components` entry in your hub config (for example `my-awox-hub.yaml`) with this local source (do not keep both entries):
 
 ```yaml
 external_components:
   - source:
-   type: local
-   path: D:/Projects/EspHome-AwoX-BLE-mesh-hub/components
+      type: local
+      path: /path/to/EspHome-AwoX-BLE-mesh-hub/components
 ```
 
 Keep the live mesh credentials, device mappings, name, broker, and BLE settings unchanged for the baseline. After adding the health diagnostics below, validate, compile, and upload from PowerShell:
 
 ```powershell
-$config = 'D:\Projects\home-setup\home-assistant\others\esphome\esp_awox_ble_mesh_taussigova.yaml'
+$config = 'C:\path\to\my-awox-hub.yaml'
 esphome config $config
 esphome compile $config
-esphome upload $config --device 192.168.10.32
+esphome upload $config --device <hub-ip-address>
 ```
 
 Check that the compiled configuration lists `external_components` as a local path before uploading. The included `validation-c3.yaml` compiles against the local code with dummy credentials; **do not flash it to the real hub**.
@@ -48,34 +48,34 @@ text_sensor:
       name: "AwoX Hub reset reason"
 ```
 
-On an always-on computer on the same LAN as the Home Assistant MQTT broker, install `uv` and run the recorder before the light test. In PowerShell, from this repo (replace the username and private output path):
+On an always-on computer on the same LAN as the MQTT broker, install `uv` and run the recorder before the light test. In PowerShell, from this repo (replace the broker host, username and private output path):
 
 ```powershell
-uv run --no-project --with paho-mqtt python .\capture_mqtt.py --host homeassistant.lan --user YOUR_MQTT_USER --hours 12 --output D:\PrivateLogs\awox-YYYYMMDD.jsonl
+uv run --no-project --with paho-mqtt python .\capture_mqtt.py --host <mqtt-broker-host> --user YOUR_MQTT_USER --hours 12 --output C:\path\to\private-logs\awox-YYYYMMDD.jsonl
 ```
 
-It prompts for the password, reconnects on subscriber disconnect, timestamps broker events in UTC, and records `awox-ble-mesh-hub/#` (including `debug`, `status`, `connected`, `connection_status`, and per-device `availability`). Create the output directory beforehand; keep the PC awake and the output outside Git. **The `debug` stream can contain mesh credentials and session keys: keep the raw JSONL private and redact before sharing.** If the broker or the PC disconnects, the recorder logs the gap but cannot recover MQTT messages sent while it was away. A USB serial log of the hub is needed to see firmware events during a hub Wi-Fi outage.
+It prompts for the password, reconnects on subscriber disconnect, timestamps broker events in UTC, and records `awox-ble-mesh-hub/#` (including `debug`, `status`, `connected`, `connection_status`, and per-device `availability`). Create the output directory beforehand; keep the PC awake and the output outside Git. **The `debug` stream can contain mesh credentials and session keys: keep the raw JSONL private and redact before sharing.** If the broker or the PC disconnects, the recorder logs the gap but cannot recover MQTT messages sent while it was away. A USB serial log of the hub is needed to see firmware events during a hub network outage.
 
-If the AwoX M5Stack/ESP32 is connected directly to your Windows PC via a data-capable USB cable, find its port with `Get-CimInstance Win32_SerialPort | Select-Object Name,DeviceID,PNPDeviceID` (disconnect/reconnect the M5Stack to distinguish it from other ports). Start this in a second PowerShell terminal before the test, replacing `COM5` and the private output path:
+If the hub's ESP32 is connected directly to your Windows PC via a data-capable USB cable, find its port with `Get-CimInstance Win32_SerialPort | Select-Object Name,DeviceID,PNPDeviceID` (disconnect/reconnect the ESP32 to distinguish it from other ports). Start this in a second PowerShell terminal before the test, replacing `COM5` and the private output path:
 
 ```powershell
-uv run --no-project --with pyserial python D:\Projects\EspHome-AwoX-BLE-mesh-hub\capture_serial.py --port COM5 --hours 12 --output D:\PrivateLogs\awox-serial-YYYYMMDD.jsonl
+uv run --no-project --with pyserial python .\capture_serial.py --port COM5 --hours 12 --output C:\path\to\private-logs\awox-serial-YYYYMMDD.jsonl
 ```
 
-The serial recorder timestamps each line in UTC and retries the same COM port after USB disconnects. Confirm a `serial_open` event and fresh `line` events before leaving it running. If Windows gives the M5Stack a *different* COM number after reconnection, restart with that port. Start the MQTT recorder above independently in the first terminal; USB serial remains available when hub Wi-Fi/MQTT drops. Connecting the M5Stack to the PC may change its power supply or BLE placement: keep it in its original position where practical, and record the move if that is impossible. Keep the PC awake on mains power. A normal USB replug restarts the ESP32, so do it before measuring the baseline.
+The serial recorder timestamps each line in UTC and retries the same COM port after USB disconnects. Confirm a `serial_open` event and fresh `line` events before leaving it running. If Windows gives the ESP32 a *different* COM number after reconnection, restart with that port. Start the MQTT recorder above independently in the first terminal; USB serial remains available when the hub's network/MQTT drops. Connecting the ESP32 to the PC may change its power supply or BLE placement: keep it in its original position where practical, and record the move if that is impossible. Keep the PC awake on mains power. A normal USB replug restarts the ESP32, so do it before measuring the baseline.
 
-If both SkyConnect and the AwoX ESP are instead plugged into Home Assistant Green, leave both in place. Windows cannot read Green's USB serial port using `COM5`. The ESPHome Device Builder logs view is not a persistent unattended capture.
+If the hub's ESP32 is instead plugged into your Home Assistant host, Windows cannot read its USB serial port using `COM5`. The ESPHome Device Builder logs view is not a persistent unattended capture.
 
-For a file capture on Green, install the Community **Advanced SSH & Web Terminal** app (the standard Terminal & SSH app does not have the same hardware access). Configure authentication and add `socat` and `coreutils` to the app's `packages` list, then restart that app. In its terminal run `ls -l /dev/serial/by-id/` and identify the Espressif/ESP32-C3 entry by name; **do not select the SkyConnect/Zigbee coordinator**. If the ESP32 is not listed, verify its data-capable USB cable and that this app can see the port before testing. Close any ESPHome serial logs viewer so it does not compete for the port. Start a 12-hour file capture in the app terminal, replacing the device path with the identified ESP entry:
+For a file capture on the Home Assistant host, install the Community **Advanced SSH & Web Terminal** app (the standard Terminal & SSH app does not have the same hardware access). Configure authentication and add `socat` and `coreutils` to the app's `packages` list, then restart that app. In its terminal run `ls -l /dev/serial/by-id/` and identify the Espressif/ESP32 entry by name; **do not select a Zigbee/Z-Wave coordinator**. If the ESP32 is not listed, verify its data-capable USB cable and that this app can see the port before testing. Close any ESPHome serial logs viewer so it does not compete for the port. Start a 12-hour file capture in the app terminal, replacing the device path with the identified ESP entry:
 
 ```sh
 DEVICE='/dev/serial/by-id/usb-Espressif_REPLACE_WITH_ACTUAL_NAME'
-LOG='/share/awox-serial-20261001.txt'
+LOG='/share/awox-serial-YYYYMMDD.txt'
 test -e "$DEVICE" && command -v socat && command -v timeout
 nohup timeout 12h sh -c 'while :; do date -u "+[%Y-%m-%dT%H:%M:%SZ] opening serial" >> "$1"; socat -u "$2",raw,echo=0,b115200 - >> "$1" 2>&1; sleep 2; done' sh "$LOG" "$DEVICE" </dev/null >/dev/null 2>&1 &
 ```
 
-Check `tail -n 20 "$LOG"` after a minute: it must show actual ESPHome log lines, not just `opening serial` or permission errors. The loop retries if the ESP USB device disappears and reappears, and the capture ends after 12 hours. It does not survive a restart of the SSH app itself; `/share` persists, but the recorder must be restarted afterward. The PC can record MQTT simultaneously, and neither capture needs the SkyConnect port.
+Check `tail -n 20 "$LOG"` after a minute: it must show actual ESPHome log lines, not just `opening serial` or permission errors. The loop retries if the ESP USB device disappears and reappears, and the capture ends after 12 hours. It does not survive a restart of the SSH app itself; `/share` persists, but the recorder must be restarted afterward. The PC can record MQTT simultaneously.
 
 Keep any serial capture running for the full test. Use a powered USB cable that does not disturb the hub's normal placement; if this changes its supply or RF environment, record that as a separate test, not the baseline. Serial and MQTT debug logs contain sensitive data and must remain private.
 
